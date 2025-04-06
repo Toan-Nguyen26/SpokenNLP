@@ -17,7 +17,7 @@ def data_statistics(in_file):
     if not os.path.exists(in_file):
         print("{} not found".format(in_file))
         return
-    # "篇章字符长度", "句子数", "话题数", "句子长度", "话题长度", "话题句子数"
+    # "document_length", "sentence_count", "topic_count", "sentence_length", "话题长度", "话题sentence_count"
     describe_df_output_path = os.path.join(os.path.dirname(in_file), "{}_describe_df.csv".format(os.path.basename(in_file)))
     
     doc_length = []
@@ -68,12 +68,12 @@ def data_statistics(in_file):
 
             doc_length.append(d_len)
     
-    describe_df = pd.DataFrame(doc_length, columns=["篇章字符长度"]).describe()
-    describe_df = pd.concat([describe_df, pd.DataFrame(doc_sent_cnts, columns=["句子数"]).describe()] ,axis=1)
-    describe_df = pd.concat([describe_df, pd.DataFrame(doc_topic_cnts, columns=["话题数"]).describe()] ,axis=1)
-    describe_df = pd.concat([describe_df, pd.DataFrame(sent_length, columns=["句子长度"]).describe()] ,axis=1)
-    describe_df = pd.concat([describe_df, pd.DataFrame(topic_length, columns=["主题长度"]).describe()] ,axis=1)
-    describe_df = pd.concat([describe_df, pd.DataFrame(topic_sent_cnts, columns=["主题句子数"]).describe()] ,axis=1)
+    describe_df = pd.DataFrame(doc_length, columns=["document_length"]).describe()
+    describe_df = pd.concat([describe_df, pd.DataFrame(doc_sent_cnts, columns=["sentence_count"]).describe()] ,axis=1)
+    describe_df = pd.concat([describe_df, pd.DataFrame(doc_topic_cnts, columns=["topic_count"]).describe()] ,axis=1)
+    describe_df = pd.concat([describe_df, pd.DataFrame(sent_length, columns=["sentence_length"]).describe()] ,axis=1)
+    describe_df = pd.concat([describe_df, pd.DataFrame(topic_length, columns=["topic_length"]).describe()] ,axis=1)
+    describe_df = pd.concat([describe_df, pd.DataFrame(topic_sent_cnts, columns=["sentences_per_topic"]).describe()] ,axis=1)
 
     describe_df.to_csv(describe_df_output_path, encoding="utf-8-sig")
     

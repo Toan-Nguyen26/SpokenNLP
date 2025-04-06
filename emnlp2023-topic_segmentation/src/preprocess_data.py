@@ -1,143 +1,85 @@
+#!/usr/bin/env python3
+"""
+Vietnamese Wikipedia Segment Formatter (textseg_uet_v1)
+
+This script formats Vietnamese Wikipedia articles into JSONL format for text segmentation tasks.
+It tokenizes sentences and marks section boundaries for training segmentation models.
+
+Usage:
+    python preprocess_viwiki.py --input /path/to/split_data --output /path/to/processed_output
+
+Dependencies:
+    - underthesea for Vietnamese sentence tokenization
+    - tqdm for progress bars
+"""
 
 import os
 import json
-import configparser
 import argparse
-
+import configparser
 from tqdm import tqdm
-from nltk.tokenize import sent_tokenize
-
-from analysis import tokenizer
+from underthesea import sent_tokenize
 from analysis.statistics_of_data import data_statistics
 
-bTokenizer = tokenizer.BasicTokenizer()
-tokenize_func = bTokenizer.tokenize
-
+# Section flag marker
 sec_flag = "========"
 
-
 def tokenize_method(sec_text):
-    # get paragraphs
+    """
+    Tokenizes section text into sentences and labels the last sentence as the section boundary.
+    
+    Args:
+        sec_text (str): The text content of a section
+        
+    Returns:
+        tuple: (sentences, labels) where labels mark section boundaries (1 for last sentence, 0 otherwise)
+    """
+    # Get paragraphs
     sec_paragraphs = list(filter(lambda x: x != '', sec_text.split("\n")))
-    # tokenized to sentences by nltk
+    
+    # Tokenize to sentences by underthesea (replaces nltk in the original)
     sec_sents = [sent_tokenize(p) for p in sec_paragraphs]
-    sec_sent_labels = [[-100] * (len(p_sents) - 1) + [0] if len(p_sents) >= 1 else [] for p_sents in sec_sents]
-
-    # label of final sentence of topic is 1, final sentence of each paragraph is 0, other sentences is -100
+    
+    # Handle empty section case
+    if not sec_sents:
+        return [], []
+    
+    # Create labels for sentences
+    # Final sentence of topic is 1, other sentences are 0
+    sec_sent_labels = [[0] * len(p_sents) for p_sents in sec_sents]
+    
+    # Flatten sentences and labels
     sec_sents = sum(sec_sents, [])
     sec_sent_labels = sum(sec_sent_labels, [])  # convert to 1-d list
-    sec_sent_labels[-1] = 1
+    
+    # Mark the last sentence as section boundary
+    if sec_sent_labels:
+        sec_sent_labels[-1] = 1
 
     return sec_sents, sec_sent_labels
 
-
-def process_wiki_section_subset(train_file, dev_file, test_file, out_folder):
-    if not os.path.exists(out_folder):
-        os.makedirs(out_folder)
-    modes = ["train", "dev", "test"]
-    files = [train_file, dev_file, test_file]
-    all_mode_examples = {k: [] for k in modes}  # mode -> examples
-
-    total_doc_cnt, total_topic_cnt, total_sent_cnt = 0, 0, 0
-    for file_, mode in zip(files, modes):
-        sent_cnt = 0
-        topic_cnt = 0
-        out_file = os.path.join(out_folder, mode + ".jsonl")
-        res_examples = []
-        with open(file_, "r") as f:
-            data = json.load(f)
-            for example_id, example in enumerate(data):
-                text, annotations = example["text"], example["annotations"]
-                sentences, labels = [], []
-                section_topic_labels, sentence_topic_labels = [], []
-                try:
-                    for anno in annotations:
-                        topic_cnt += 1
-                        begin = anno["begin"]
-                        length = anno["length"]
-
-                        sec_text = text[begin:begin + length]
-                        sec_sents, sec_sent_labels = tokenize_method(sec_text)
-                        sentences += sec_sents
-                        labels += sec_sent_labels
-                        sent_cnt += len(sec_sents)
-
-                        section_topic_labels.append(anno["sectionLabel"])
-                        sentence_topic_labels += [anno["sectionLabel"]] * len(sec_sents)
-                    if len(sentences) != len(labels):
-                        print("example_id: {}, len(sentences): {} != len(labels): {}".format(example_id, len(sentences),
-                                                                                             len(labels)))
-                    assert len(sentences) == len(labels)
-                except AssertionError:
-                    print("ERROR: ", example_id)
-                    continue
-                json_example = {
-                    "sentences": sentences,
-                    "labels": labels,
-                    "section_topic_labels": section_topic_labels,
-                    "sentence_topic_labels": sentence_topic_labels,
-                }
-                res_examples.append(json.dumps(json_example) + "\n")
-
-        with open(out_file, "w") as f:
-            f.writelines(res_examples)
-        doc_cnt = len(res_examples)
-
-        all_mode_examples[mode] = res_examples
-        total_sent_cnt += sent_cnt
-        total_topic_cnt += topic_cnt
-        total_doc_cnt += doc_cnt
-        cnt_info = "mode: {}, doc_cnt: {}, topic_cnt: {}, sent_cnt: {}".format(mode, doc_cnt, topic_cnt, sent_cnt)
-        print(cnt_info)
-    print("total_doc_cnt: {}, total_topic_cnt: {}, total_sent_cnt: {}\n".format(total_doc_cnt, total_topic_cnt, total_sent_cnt))
-
-    return all_mode_examples
-
-
-def merge_wiki_section(out_folder, disease_mode_examples, city_mode_examples):
-    wiki_section_train_file = os.path.join(out_folder, "train.jsonl")
-    wiki_section_dev_file = os.path.join(out_folder, "dev.jsonl")
-    wiki_section_test_file = os.path.join(out_folder, "test.jsonl")
-
-    with open(wiki_section_train_file, "w") as f:
-        f.writelines(disease_mode_examples["train"] + city_mode_examples["train"])
-    with open(wiki_section_dev_file, "w") as f:
-        f.writelines(disease_mode_examples["dev"] + city_mode_examples["dev"])
-    with open(wiki_section_test_file, "w") as f:
-        f.writelines(disease_mode_examples["test"] + city_mode_examples["test"])
-
-
-def process_wiki_section(data_folder, out_folder):
-    # process wiki_section en_disease
-    disease_train_file = os.path.join(data_folder, "wikisection_en_disease_train.json")
-    disease_dev_file = os.path.join(data_folder, "wikisection_en_disease_validation.json")
-    disease_test_file = os.path.join(data_folder, "wikisection_en_disease_test.json")
-    disease_out_folder = os.path.join(out_folder, "../wiki_section_disease")
-    disease_mode_examples = process_wiki_section_subset(disease_train_file, disease_dev_file, disease_test_file, disease_out_folder)
-
-    # process wiki_section en_city
-    city_train_file = os.path.join(data_folder, "wikisection_en_city_train.json")
-    city_dev_file = os.path.join(data_folder, "wikisection_en_city_validation.json")
-    city_test_file = os.path.join(data_folder, "wikisection_en_city_test.json")
-    city_out_folder = os.path.join(out_folder, "../wiki_section_city")
-    city_mode_examples = process_wiki_section_subset(city_train_file, city_dev_file, city_test_file, city_out_folder)
-
-    # merge en_disease and en_city to wiki_section
-    merge_wiki_section(out_folder, disease_mode_examples, city_mode_examples)
-
-
 def process_wiki_folder(folder, out_file):
-    # get all files
+    """
+    Process all text files in a folder.
+    
+    Args:
+        folder (str): Path to folder with text files
+        out_file (str): Path to output JSONL file
+    """
+    # Get all files
     all_files = []
     for root, dirs, files in os.walk(folder):
         for name in files:
-            all_files.append(os.path.join(root, name))
+            if name.endswith('.txt'):
+                all_files.append(os.path.join(root, name))
 
     examples = []
     for file_ in tqdm(all_files):
-        # get sections sentences and labels
+        # Get sections sentences and labels
         sentences, labels = [], []
-        with open(file_, "r") as f:
+        section_topic_labels = []
+        
+        with open(file_, "r", encoding='utf-8') as f:
             lines = f.readlines()
             sec_flag_indices = []
             for i, line in enumerate(lines):
@@ -149,116 +91,153 @@ def process_wiki_folder(folder, out_file):
                 start = sec_flag_indices[i] + 1
                 end = sec_flag_indices[i + 1]
                 if start == end:
-                    # empty section
+                    # Empty section
                     continue
-                sec_sents = [line.strip() for line in lines[start:end]]
-                sec_labels = [0] * len(sec_sents)
-                sec_labels[-1] = 1
-
+                
+                # Extract section title if available
+                header_line = lines[sec_flag_indices[i]].strip()
+                if ',' in header_line:
+                    parts = header_line[len(sec_flag):].split(',', 2)
+                    if len(parts) >= 2:
+                        section_level = parts[0].strip()
+                        section_title = parts[1].strip() if len(parts) == 2 else parts[2].strip()
+                        # Remove trailing period if present
+                        if section_title.endswith('.'):
+                            section_title = section_title[:-1]
+                        section_topic_labels.append(section_title)
+                
+                # Get section content
+                sec_text = ''.join(lines[start:end])
+                
+                # Tokenize section text into sentences and get labels
+                sec_sents, sec_labels = tokenize_method(sec_text)
+                
+                # Skip empty sections
+                if not sec_sents:
+                    continue
+                    
                 sentences += sec_sents
                 labels += sec_labels
+                
+        # Create example dictionary
         example = {
             "file": file_,
             "sentences": sentences,
             "labels": labels,
         }
-        examples.append(json.dumps(example) + "\n")
+        
+        # Add section topics if available
+        if section_topic_labels:
+            example["section_topic_labels"] = section_topic_labels
+            
+        # Skip documents with no sentences
+        if not sentences:
+            continue
+            
+        examples.append(json.dumps(example, ensure_ascii=False) + "\n")
+    
     print("len(examples): ", len(examples))
-    with open(out_file, "w") as f:
+    with open(out_file, "w", encoding='utf-8') as f:
         f.writelines(examples)
+    
+    return out_file
 
-
-def process_wiki727k(data_folder, out_folder):
-    for mode in ["test", "dev", "train"]:
+def process_textseg_uet_v1(data_folder, out_folder):
+    """
+    Process textseg_uet_v1 data from train/dev/test folders.
+    
+    Args:
+        data_folder (str): Root folder containing train/dev/test splits
+        out_folder (str): Folder to save processed JSONL files
+    """
+    # Create output folder if it doesn't exist
+    os.makedirs(out_folder, exist_ok=True)
+    
+    # Process each mode (train, dev, test)
+    for mode in ["train", "dev", "test"]:
         folder = os.path.join(data_folder, mode)
-        out_file = os.path.join(out_folder, mode + ".jsonl")
-        print("out_file: ", out_file)
-        process_wiki_folder(folder, out_file)
+        if not os.path.exists(folder):
+            print(f"Warning: {mode} folder not found at {folder}")
+            continue
+            
+        out_file = os.path.join(out_folder, f"{mode}.jsonl")
+        print(f"Processing {mode} data from {folder}")
+        print(f"Output will be saved to: {out_file}")
+        
+        processed_file = process_wiki_folder(folder, out_file)
+        
+        # Calculate and print statistics
+        try:
+            data_statistics(out_file)
+        except Exception as e:
+            print(f"Error calculating statistics: {e}")
+            # Fallback statistics calculation
+            print_basic_statistics(out_file)
 
-
-def process_wiki50(data_folder, out_folder):
-    out_file = os.path.join(out_folder, "test.jsonl")
-    process_wiki_folder(data_folder, out_file)
-
-
-def process_wiki_elements(data_folder, out_folder):
-    text_file = os.path.join(data_folder, "wikielements.text")
-    seg_file = os.path.join(data_folder, "wikielements.segmenttitles")
-    out_file = os.path.join(out_folder, "test.jsonl")
-
-    with open(seg_file, "r") as f:
-        seg_lines = f.readlines()
-    with open(text_file, "r") as f:
-        para_lines = f.readlines()
-    assert len(seg_lines) == len(para_lines)
-
-    doc_dict = {}
-    for i, (seg_line, para_line) in enumerate(zip(seg_lines, para_lines)):
-        doc_index, para_index, topic_title = seg_line.strip().split(",")[:3]  # index starts from 1
-        if doc_index not in doc_dict:
-            doc_dict[doc_index] = {"para_info": [], "topic_info": []}
-        doc_dict[doc_index]["para_info"].append({
-            "para_index": para_index,
-            "topic_title": topic_title,
-            "para_text": para_line.strip(),
-        })
-
-    doc_indices = sorted(doc_dict.keys())
-    for doc_index in doc_indices:
-        para_info = doc_dict[doc_index]["para_info"]
-        seq_topic_labels = []
-        cur_topic_title = ""
-        for i in range(len(para_info) - 1, -1, -1):
-            if para_info[i]["topic_title"] != cur_topic_title:
-                seq_topic_labels.insert(0, 1)
-            else:
-                seq_topic_labels.insert(0, 0)
-            cur_topic_title = para_info[i]["topic_title"]
-        doc_dict[doc_index]["topic_info"] = {
-            "sentences": [v["para_text"] for v in para_info],
-            "labels": seq_topic_labels,
-        }
-
-    with open(out_file, "w") as f:
-        for doc_index in doc_indices:
-            f.write(json.dumps(doc_dict[doc_index]["topic_info"]) + "\n")
-
+def print_basic_statistics(jsonl_file):
+    """
+    Print basic statistics for a processed JSONL file (fallback if data_statistics fails).
+    
+    Args:
+        jsonl_file (str): Path to the JSONL file
+    """
+    try:
+        with open(jsonl_file, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+        
+        documents = len(lines)
+        sentences = 0
+        section_boundaries = 0
+        
+        for line in lines:
+            data = json.loads(line)
+            sentences += len(data["sentences"])
+            section_boundaries += sum(data["labels"])
+        
+        print(f"\nBasic statistics for {os.path.basename(jsonl_file)}:")
+        print(f"  Documents: {documents}")
+        print(f"  Total sentences: {sentences}")
+        print(f"  Section boundaries: {section_boundaries}")
+        print(f"  Average sentences per document: {sentences/documents:.2f}")
+        print(f"  Average sections per document: {section_boundaries/documents:.2f}")
+        
+    except Exception as e:
+        print(f"Error calculating basic statistics: {e}")
 
 def get_data_name2folder(config_path):
+    """Read data paths from config file"""
     config = configparser.ConfigParser()
     config.read(config_path)
     mapping = config['mapping']
     return mapping
 
-
 def get_process_dict():
+    """Return dictionary of processing functions for different datasets"""
     process_dict = {
-        "wiki_section": process_wiki_section,
-        "wiki50": process_wiki50,
-        "wiki727k": process_wiki727k,
-        "wiki_elements": process_wiki_elements,
+        "wiki_section": None,  # Not implemented for Vietnamese
+        "wiki50": None,        # Not implemented for Vietnamese
+        "wiki727k": None,      # Not implemented for Vietnamese
+        "wiki_elements": None, # Not implemented for Vietnamese
+        "textseg_uet_v1": process_textseg_uet_v1,
     }
     return process_dict
 
-
 if __name__ == "__main__":
-    out_root_folder = "./data"
-    config_path = "./config/config.ini"
-    data_name2folder = get_data_name2folder(config_path)
-    process_dict = get_process_dict()
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("data_name", help="dataset to be processed")
+    # For direct execution with command line arguments
+    parser = argparse.ArgumentParser(description="Preprocess Vietnamese Wikipedia articles for text segmentation")
+    parser.add_argument("--input", required=True, help="Path to folder containing Wiki article files (with train/dev/test splits)")
+    parser.add_argument("--output", required=True, help="Path to save the processed JSONL files")
+    parser.add_argument("--data_name", default="textseg_uet_v1", help="Dataset name (default: textseg_uet_v1)")
+    
     args = parser.parse_args()
-    data_name = args.data_name
-
-    data_folder = data_name2folder[data_name]
-    out_folder = os.path.join(out_root_folder, data_name)
-    if not os.path.exists(out_folder):
-        os.makedirs(out_folder)
-    process_fct = process_dict[data_name]
-    process_fct(data_folder, out_folder)
-
-    data_statistics(os.path.join(out_folder, "train.jsonl"))
-    data_statistics(os.path.join(out_folder, "dev.jsonl"))
-    data_statistics(os.path.join(out_folder, "test.jsonl"))
+    
+    # Get the processing function for the specified dataset
+    process_dict = get_process_dict()
+    process_fct = process_dict.get(args.data_name)
+    
+    if process_fct:
+        process_fct(args.input, args.output)
+    else:
+        print(f"Error: Processing function for dataset '{args.data_name}' not implemented")
+        
+    print("Processing complete!")

@@ -20,6 +20,7 @@ model_name=longformer_base
 
 dataset=wiki_section
 dataset=wiki_section_disease
+dataset=processed_textseg_uet_v1
 # dataset=wiki727k
 
 dataset_cache_dir=./cached_data/${dataset}_${model_name}_${max_seq_length}
